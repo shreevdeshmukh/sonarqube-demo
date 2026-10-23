@@ -7,7 +7,18 @@ pipeline {
                 checkout scm
             }
         }
-
+        stage('Trivy Security Scan') {
+            steps {
+                sh '''
+                    trivy fs \
+                      --scanners vuln,secret,misconfig \
+                      --format json \
+                      --output trivy-report.json \
+                      .
+                '''
+            }
+        }
+        
         stage('Build and Test') {
             steps {
                 sh 'mvn -B clean verify'
@@ -34,7 +45,7 @@ pipeline {
                   testResults: '**/target/surefire-reports/*.xml'
 
             archiveArtifacts allowEmptyArchive: true,
-                             artifacts: 'target/*.jar'
+                             artifacts: 'trivy-report.json,target/*.jar'
         }
     }
 }
