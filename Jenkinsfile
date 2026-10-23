@@ -25,8 +25,8 @@ sh 'mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988 -Dsonar.p
 
     post {
         always {
-            archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true
-            junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+           junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
+            archiveArtifacts allowEmptyArchive: true, artifacts: 'target/*.jar'
         }
     }
 }
