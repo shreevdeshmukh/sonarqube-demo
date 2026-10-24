@@ -1,8 +1,10 @@
+
 pipeline {
     agent {
         label 'dockerhost'
     }
- options {
+
+    options {
         timestamps()
         skipDefaultCheckout(true)
         disableConcurrentBuilds()
@@ -12,58 +14,58 @@ pipeline {
         choice(
             name: 'REGISTRY',
             choices: ['DOCKERHUB', 'ECR'],
-            description: 'Choose Docker Hub or AWS ECR'
+            description: 'Select Docker Hub or AWS ECR'
         )
     }
 
     environment {
-        // Configure these values for your Jenkins setup
-        SONAR_SERVER = 'SonarQube'
         SONAR_PROJECT_KEY = 'sonarqube-demo'
-
-        // Docker Hub settings
         DOCKERHUB_CREDENTIALS = 'dockerhub-creds'
         DOCKERHUB_REPO = 'ninande/my-web-app'
 
-        // AWS ECR settings
         AWS_REGION = 'ap-south-1'
         AWS_ACCOUNT_ID = '699258777180'
         ECR_REPO = 'my-web-app'
 
-        // Set by the Docker build stage
         IMAGE_TAG = ''
+        IMAGE_NAME = ''
     }
+
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
-                 sh '''
+
+                sh '''
+                    set -eu
                     echo "Source code checked out"
                     git log -1 --oneline
+                    test -f pom.xml
+                    test -f Dockerfile
                 '''
             }
         }
-        stage('Trivy Security Scan') {
+
+        stage('Trivy Filesystem Scan') {
             steps {
                 sh '''
+                    set -eu
+                    mkdir -p reports
+
                     trivy fs \
                       --scanners vuln,secret,misconfig \
                       --format json \
-                      --output trivy-report.json \
+                      --output reports/trivy-fs-report.json \
                       .
                 '''
             }
         }
-        
+
         stage('Build and Test') {
             steps {
                 sh 'mvn -B clean verify'
             }
-        }
-        stage('Unit Tests') {
-            steps {
-                sh 'mvn -B test'
-            }
+
             post {
                 always {
                     junit(
@@ -73,45 +75,55 @@ pipeline {
                 }
             }
         }
-        
+
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
                     sh '''
-                        mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988:sonar \
-                          -Dsonar.projectKey=sonarqube-demo \
-                          -Dsonar.projectName=SonarQube-Demo \
-                          -Dsonar.host.url="$SONAR_HOST_URL"
+                        set -eu
+
+                        mvn -B \
+                          org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988:sonar \
+                          -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
+                          -Dsonar.projectName="SonarQube-Demo" \
+                          -Dsonar.host.url="${SONAR_HOST_URL}"
                     '''
                 }
             }
         }
-       
-stage('Docker Build') {
-    steps {
-        script {
-            env.IMAGE_NAME = 'ninande/my-web-app'
-            env.IMAGE_TAG = "${env.BUILD_NUMBER}"
 
-            sh '''
-                set -eu
+        stage('Select Registry and Build Image') {
+            steps {
+                script {
+                    if (params.REGISTRY == 'DOCKERHUB') {
+                        env.IMAGE_NAME = env.DOCKERHUB_REPO
+                    } else {
+                        env.IMAGE_NAME =
+                            "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.ECR_REPO}"
+                    }
 
-                echo "Building image: ${IMAGE_NAME}:${IMAGE_TAG}"
+                    env.IMAGE_TAG = env.BUILD_NUMBER
+                }
 
-                docker build \
-                  -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-                  -t "${IMAGE_NAME}:latest" .
-            '''
+                sh '''
+                    set -eu
+
+                    echo "Building ${IMAGE_NAME}:${IMAGE_TAG}"
+
+                    docker build \
+                      -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+                      -t "${IMAGE_NAME}:latest" \
+                      .
+                '''
+            }
         }
-    }
-}
 
-        stage('Trivy Image Vulnerability Scan') {
+        stage('Trivy Image Scan') {
             steps {
                 sh '''
+                    set -eu
                     mkdir -p reports
 
-                    set +e
                     trivy image \
                       --severity HIGH,CRITICAL \
                       --ignore-unfixed \
@@ -119,18 +131,11 @@ stage('Docker Build') {
                       --format json \
                       --output reports/trivy-image-report.json \
                       "${IMAGE_NAME}:${IMAGE_TAG}"
-                    scan_status=$?
-                    set -e
-
-                    echo "Trivy scan exit code: ${scan_status}"
-                    echo "JSON report: reports/trivy-image-report.json"
-
-                    exit "$scan_status"
                 '''
             }
         }
 
-        stage('Push to Docker Registry') {
+        stage('Push to Registry') {
             steps {
                 script {
                     if (params.REGISTRY == 'DOCKERHUB') {
@@ -143,13 +148,13 @@ stage('Docker Build') {
                         ]) {
                             sh '''
                                 set +x
-                                echo "$DH_TOKEN" | docker login \
-                                  -u "$DH_USER" --password-stdin
+                                echo "$DH_TOKEN" |
+                                  docker login \
+                                    --username "$DH_USER" \
+                                    --password-stdin
 
                                 docker push "${IMAGE_NAME}:${IMAGE_TAG}"
                                 docker push "${IMAGE_NAME}:latest"
-
-                                docker logout
                             '''
                         }
                     } else {
@@ -165,15 +170,11 @@ stage('Docker Build') {
 
                             docker push "${IMAGE_NAME}:${IMAGE_TAG}"
                             docker push "${IMAGE_NAME}:latest"
-
-                            docker logout \
-                              "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
                         '''
                     }
                 }
             }
         }
-        
     }
 
     post {
@@ -192,7 +193,7 @@ stage('Docker Build') {
         }
 
         failure {
-            echo 'Pipeline failed. Check the failed stage and archived reports.'
+            echo 'Pipeline failed. Check the failed stage and Console Output.'
         }
 
         cleanup {
