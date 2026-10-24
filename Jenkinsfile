@@ -1,3 +1,4 @@
+
 pipeline {
     agent {
         label 'dockerhost'
@@ -28,9 +29,7 @@ pipeline {
         AWS_ACCOUNT_ID = '699258777180'
         ECR_REPO = 'my-web-app'
 
-        DEPLOY_HOST = '10.0.2.58'
-        DEPLOY_USER = 'dockeradmin'
-        DEPLOY_DIR = '/opt/my-web-app'
+        COMPOSE_DIR = '/opt/my-web-app'
     }
 
     stages {
@@ -83,7 +82,8 @@ pipeline {
                     sh '''
                         set -eu
 
-                        mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988:sonar \
+                        mvn -B \
+                          org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988:sonar \
                           -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
                           -Dsonar.projectName="SonarQube-Demo" \
                           -Dsonar.host.url="${SONAR_HOST_URL}"
@@ -108,9 +108,12 @@ pipeline {
                 sh '''
                     set -eu
 
+                    echo "Building ${IMAGE_NAME}:${IMAGE_TAG}"
+
                     docker build \
                       -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-                      -t "${IMAGE_NAME}:latest" .
+                      -t "${IMAGE_NAME}:latest" \
+                      .
                 '''
             }
         }
@@ -121,8 +124,6 @@ pipeline {
                     set -eu
                     mkdir -p reports
 
-                    echo "Scanning ${IMAGE_NAME}:${IMAGE_TAG}"
-
                     trivy image \
                       --severity HIGH,CRITICAL \
                       --ignore-unfixed \
@@ -130,7 +131,7 @@ pipeline {
                       --output reports/trivy-image-report.json \
                       "${IMAGE_NAME}:${IMAGE_TAG}"
 
-                    echo "Trivy image report generated."
+                    echo "Image scan report generated."
                 '''
             }
         }
@@ -163,6 +164,7 @@ pipeline {
                     } else {
                         sh '''
                             set -eu
+                            set +x
 
                             aws ecr get-login-password \
                               --region "${AWS_REGION}" |
@@ -181,32 +183,68 @@ pipeline {
                 }
             }
         }
-       stage('Deploy with Docker Compose') {
-    steps {
-        sshagent(credentials: ['dockeradmin-ssh']) {
-            sh '''
-                set -eu
 
-                echo "Deploying ${IMAGE_NAME}:${IMAGE_TAG}"
-                echo "Target: ${DEPLOY_USER}@${DEPLOY_HOST}"
+        stage('Deploy with Docker Compose') {
+            steps {
+                script {
+                    if (params.REGISTRY == 'DOCKERHUB') {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: env.DOCKERHUB_CREDENTIALS,
+                                usernameVariable: 'DH_USER',
+                                passwordVariable: 'DH_TOKEN'
+                            )
+                        ]) {
+                            sh '''
+                                set -eu
+                                set +x
 
-                ssh \
-                  -o BatchMode=yes \
-                  -o StrictHostKeyChecking=yes \
-                  "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                  "cd '${DEPLOY_DIR}' && \
-                   IMAGE_NAME='${IMAGE_NAME}' \
-                   IMAGE_TAG='${IMAGE_TAG}' \
-                   docker compose pull && \
-                   IMAGE_NAME='${IMAGE_NAME}' \
-                   IMAGE_TAG='${IMAGE_TAG}' \
-                   docker compose up -d --remove-orphans"
+                                cd "${COMPOSE_DIR}"
 
-                echo "Deployment command completed."
-            '''
+                                echo "$DH_TOKEN" | docker login \
+                                  --username "$DH_USER" \
+                                  --password-stdin
+
+                                export IMAGE_NAME="${IMAGE_NAME}"
+                                export IMAGE_TAG="${IMAGE_TAG}"
+
+                                docker compose config -q
+                                docker compose pull
+                                docker compose up -d --remove-orphans
+                                docker compose ps
+
+                                docker logout || true
+                            '''
+                        }
+                    } else {
+                        sh '''
+                            set -eu
+                            set +x
+
+                            cd "${COMPOSE_DIR}"
+
+                            aws ecr get-login-password \
+                              --region "${AWS_REGION}" |
+                              docker login \
+                                --username AWS \
+                                --password-stdin \
+                                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                            export IMAGE_NAME="${IMAGE_NAME}"
+                            export IMAGE_TAG="${IMAGE_TAG}"
+
+                            docker compose config -q
+                            docker compose pull
+                            docker compose up -d --remove-orphans
+                            docker compose ps
+
+                            docker logout \
+                              "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" || true
+                        '''
+                    }
+                }
+            }
         }
-    }
-} 
     }
 
     post {
@@ -221,7 +259,7 @@ pipeline {
         }
 
         success {
-            echo 'Build, tests, scans, and image publishing completed successfully.'
+            echo 'Build, tests, scans, publishing, and deployment completed successfully.'
         }
 
         failure {
