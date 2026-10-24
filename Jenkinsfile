@@ -27,6 +27,10 @@ pipeline {
         AWS_REGION = 'ap-south-1'
         AWS_ACCOUNT_ID = '699258777180'
         ECR_REPO = 'my-web-app'
+
+        DEPLOY_HOST = '10.0.2.58'
+        DEPLOY_USER = 'dockeradmin'
+        DEPLOY_DIR = '/opt/my-web-app'
     }
 
     stages {
@@ -177,6 +181,32 @@ pipeline {
                 }
             }
         }
+       stage('Deploy with Docker Compose') {
+    steps {
+        sshagent(credentials: ['dockeradmin-ssh']) {
+            sh '''
+                set -eu
+
+                echo "Deploying ${IMAGE_NAME}:${IMAGE_TAG}"
+                echo "Target: ${DEPLOY_USER}@${DEPLOY_HOST}"
+
+                ssh \
+                  -o BatchMode=yes \
+                  -o StrictHostKeyChecking=yes \
+                  "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                  "cd '${DEPLOY_DIR}' && \
+                   IMAGE_NAME='${IMAGE_NAME}' \
+                   IMAGE_TAG='${IMAGE_TAG}' \
+                   docker compose pull && \
+                   IMAGE_NAME='${IMAGE_NAME}' \
+                   IMAGE_TAG='${IMAGE_TAG}' \
+                   docker compose up -d --remove-orphans"
+
+                echo "Deployment command completed."
+            '''
+        }
+    }
+} 
     }
 
     post {
