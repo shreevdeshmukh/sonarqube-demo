@@ -1,4 +1,3 @@
-
 pipeline {
     agent {
         label 'dockerhost'
@@ -34,6 +33,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+
                 sh '''
                     set -eu
                     git log -1 --oneline
@@ -62,6 +62,7 @@ pipeline {
             steps {
                 sh 'mvn -B clean verify'
             }
+
             post {
                 always {
                     junit(
@@ -77,6 +78,7 @@ pipeline {
                 withSonarQubeEnv('SonarQube') {
                     sh '''
                         set -eu
+
                         mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988:sonar \
                           -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
                           -Dsonar.projectName="SonarQube-Demo" \
@@ -101,6 +103,7 @@ pipeline {
 
                 sh '''
                     set -eu
+
                     docker build \
                       -t "${IMAGE_NAME}:${IMAGE_TAG}" \
                       -t "${IMAGE_NAME}:latest" .
@@ -109,23 +112,24 @@ pipeline {
         }
 
         stage('Trivy Image Scan') {
-    steps {
-        sh '''
-            set -eu
-            mkdir -p reports
+            steps {
+                sh '''
+                    set -eu
+                    mkdir -p reports
 
-            echo "Scanning Docker image..."
+                    echo "Scanning ${IMAGE_NAME}:${IMAGE_TAG}"
 
-            trivy image \
-              --severity HIGH,CRITICAL \
-              --ignore-unfixed \
-              --format json \
-              --output reports/trivy-image-report.json \
-              ninande/my-web-app:4
+                    trivy image \
+                      --severity HIGH,CRITICAL \
+                      --ignore-unfixed \
+                      --format json \
+                      --output reports/trivy-image-report.json \
+                      "${IMAGE_NAME}:${IMAGE_TAG}"
 
-            echo "Trivy JSON report generated."
-        '''
-    }
+                    echo "Trivy image report generated."
+                '''
+            }
+        }
 
         stage('Push to Registry') {
             steps {
@@ -139,13 +143,17 @@ pipeline {
                             )
                         ]) {
                             sh '''
+                                set -eu
                                 set +x
+
                                 echo "$DH_TOKEN" | docker login \
                                   --username "$DH_USER" \
                                   --password-stdin
 
                                 docker push "${IMAGE_NAME}:${IMAGE_TAG}"
                                 docker push "${IMAGE_NAME}:latest"
+
+                                docker logout || true
                             '''
                         }
                     } else {
@@ -161,6 +169,9 @@ pipeline {
 
                             docker push "${IMAGE_NAME}:${IMAGE_TAG}"
                             docker push "${IMAGE_NAME}:latest"
+
+                            docker logout \
+                              "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" || true
                         '''
                     }
                 }
