@@ -14,31 +14,28 @@ pipeline {
         choice(
             name: 'REGISTRY',
             choices: ['DOCKERHUB', 'ECR'],
-            description: 'Select Docker Hub or AWS ECR'
+            description: 'Choose Docker Hub or AWS ECR'
         )
     }
 
     environment {
+        SONAR_SERVER = 'SonarQube'
         SONAR_PROJECT_KEY = 'sonarqube-demo'
+
         DOCKERHUB_CREDENTIALS = 'dockerhub-creds'
         DOCKERHUB_REPO = 'ninande/my-web-app'
 
         AWS_REGION = 'ap-south-1'
         AWS_ACCOUNT_ID = '699258777180'
         ECR_REPO = 'my-web-app'
-
-        IMAGE_TAG = ''
-        IMAGE_NAME = ''
     }
 
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
-
                 sh '''
                     set -eu
-                    echo "Source code checked out"
                     git log -1 --oneline
                     test -f pom.xml
                     test -f Dockerfile
@@ -65,7 +62,6 @@ pipeline {
             steps {
                 sh 'mvn -B clean verify'
             }
-
             post {
                 always {
                     junit(
@@ -81,9 +77,7 @@ pipeline {
                 withSonarQubeEnv('SonarQube') {
                     sh '''
                         set -eu
-
-                        mvn -B \
-                          org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988:sonar \
+                        mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.2.0.4988:sonar \
                           -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
                           -Dsonar.projectName="SonarQube-Demo" \
                           -Dsonar.host.url="${SONAR_HOST_URL}"
@@ -102,18 +96,14 @@ pipeline {
                             "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.ECR_REPO}"
                     }
 
-                    env.IMAGE_TAG = env.BUILD_NUMBER
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}"
                 }
 
                 sh '''
                     set -eu
-
-                    echo "Building ${IMAGE_NAME}:${IMAGE_TAG}"
-
                     docker build \
                       -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-                      -t "${IMAGE_NAME}:latest" \
-                      .
+                      -t "${IMAGE_NAME}:latest" .
                 '''
             }
         }
@@ -148,10 +138,9 @@ pipeline {
                         ]) {
                             sh '''
                                 set +x
-                                echo "$DH_TOKEN" |
-                                  docker login \
-                                    --username "$DH_USER" \
-                                    --password-stdin
+                                echo "$DH_TOKEN" | docker login \
+                                  --username "$DH_USER" \
+                                  --password-stdin
 
                                 docker push "${IMAGE_NAME}:${IMAGE_TAG}"
                                 docker push "${IMAGE_NAME}:latest"
@@ -193,7 +182,7 @@ pipeline {
         }
 
         failure {
-            echo 'Pipeline failed. Check the failed stage and Console Output.'
+            echo 'Pipeline failed. Check Console Output and archived reports.'
         }
 
         cleanup {
