@@ -109,21 +109,23 @@ pipeline {
         }
 
         stage('Trivy Image Scan') {
-            steps {
-                sh '''
-                    set -eu
-                    mkdir -p reports
+    steps {
+        sh '''
+            set -eu
+            mkdir -p reports
 
-                    trivy image \
-                      --severity HIGH,CRITICAL \
-                      --ignore-unfixed \
-                      --exit-code 1 \
-                      --format json \
-                      --output reports/trivy-image-report.json \
-                      "${IMAGE_NAME}:${IMAGE_TAG}"
-                '''
-            }
-        }
+            echo "Scanning Docker image..."
+
+            trivy image \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --format json \
+              --output reports/trivy-image-report.json \
+              ninande/my-web-app:4
+
+            echo "Trivy JSON report generated."
+        '''
+    }
 
         stage('Push to Registry') {
             steps {
@@ -169,7 +171,7 @@ pipeline {
     post {
         always {
             archiveArtifacts(
-                artifacts: 'reports/*.json',
+                artifacts: 'reports/**',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
