@@ -84,26 +84,26 @@ pipeline {
                 }
             }
         }
-        stage('Docker Build') {
-            steps {
-                script {
-                    if (params.REGISTRY == 'DOCKERHUB') {
-                        env.IMAGE_NAME = env.DOCKERHUB_REPO
-                    } else {
-                        env.IMAGE_NAME =
-                            "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.ECR_REPO}"
-                    }
+       
+stage('Docker Build') {
+    steps {
+        script {
+            env.IMAGE_NAME = 'ninande/my-web-app'
+            env.IMAGE_TAG = "${env.BUILD_NUMBER}"
 
-                    env.IMAGE_TAG = "${env.BUILD_NUMBER}"
+            sh '''
+                set -eu
 
-                    sh '''
-                        docker build \
-                          -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-                          -t "${IMAGE_NAME}:latest" .
-                    '''
-                }
-            }
+                echo "Building image: ${IMAGE_NAME}:${IMAGE_TAG}"
+
+                docker build \
+                  -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+                  -t "${IMAGE_NAME}:latest" .
+            '''
         }
+    }
+}
+
         stage('Trivy Image Vulnerability Scan') {
             steps {
                 sh '''
